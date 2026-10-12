@@ -1,0 +1,51 @@
+{
+	"name": "@solana-mobile/seeker-connect-react-native",
+	"version": "0.0.0",
+	"description": "React Native implementation of the Seeker Connect SeekerLink port — connects directly to a certified device's own wallet over the local Mobile Wallet Adapter session, with no chooser.",
+	"keywords": [
+		"solana",
+		"solana-mobile",
+		"seeker",
+		"seeker-connect",
+		"wallet",
+		"web3",
+		"mobile-wallet-adapter",
+		"react-native"
+	],
+	"license": "Apache-2.0",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/solana-mobile/seeker-connect.git",
+		"directory": "js/packages/react-native"
+	},
+	"homepage": "https://github.com/solana-mobile/seeker-connect/tree/main/js/packages/react-native#readme",
+	"type": "module",
+	"files": [
+		"dist"
+	],
+	"publishConfig": {
+		"access": "public"
+	},
+	"exports": {
+		".": {
+			"types": "./dist/index.d.ts",
+			"import": "./dist/index.js"
+		}
+	},
+	"scripts": {
+		"build": "tsc -p tsconfig.json"
+	},
+	"dependencies": {
+		"@solana-mobile/mobile-wallet-adapter-protocol": "^3.0.0",
+		"@solana-mobile/seeker-connect-core": "workspace:*"
+	},
+	"peerDependencies": {
+		"react": "*",
+		"react-native": "*"
+	},
+	"devDependencies": {
+		"react": "^19.2.0",
+		"react-native": "^0.86.0",
+		"vitest": "^4.1.10"
+	}
+}
