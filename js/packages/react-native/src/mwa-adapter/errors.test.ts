@@ -12,7 +12,7 @@ import {
 } from '@solana-mobile/mobile-wallet-adapter-protocol';
 import { describe, expect, it } from 'vitest';
 
-import { associationFailure, mapWalletError } from './errors.js';
+import { associationFailure, mapWalletError, walletFailure } from './errors.js';
 
 function protocolError(code: number): SolanaMobileWalletAdapterProtocolError<number> {
 	return new SolanaMobileWalletAdapterProtocolError(0, code, `protocol error ${code}`);
@@ -63,6 +63,73 @@ describe('mapWalletError', () => {
 	it('passes non-protocol errors through unchanged', () => {
 		const original = new Error('thrown by the consumer callback');
 		expect(mapWalletError(original)).toBe(original);
+	});
+
+	// The RN fork returns invoke() from its try/catch without awaiting, so
+	// wallet JSON-RPC errors arrive in the bridge's raw shape instead of
+	// the protocol error class — observed on-device as a decline sealed
+	// into wallet-error; classified here by jsonRpcErrorCode.
+	function bridgeJsonRpcError(jsonRpcErrorCode: number, message: string): Error {
+		const error = new Error(message) as Error & {
+			code?: string;
+			userInfo?: { jsonRpcErrorCode?: number };
+		};
+		error.code = 'JSON_RPC_ERROR';
+		error.userInfo = { jsonRpcErrorCode };
+		return error;
+	}
+
+	it('classifies the raw RN bridge JSON-RPC rejection', () => {
+		const cause = bridgeJsonRpcError(
+			SolanaMobileWalletAdapterProtocolErrorCode.ERROR_AUTHORIZATION_FAILED,
+			'-1/authorization request failed',
+		);
+		const mapped = mapWalletError(cause);
+		expect(mapped).toBeInstanceOf(SeekerConnectError);
+		expect((mapped as SeekerConnectError).code).toBe(SeekerConnectErrorCode.authorizationDeclined);
+		expect((mapped as SeekerConnectError).message).toBe('-1/authorization request failed');
+	});
+
+	it.each([
+		SolanaMobileWalletAdapterProtocolErrorCode.ERROR_NOT_SIGNED,
+		SolanaMobileWalletAdapterProtocolErrorCode.ERROR_NOT_SUBMITTED,
+	])('maps bridge jsonRpcErrorCode %s to request-declined', (code) => {
+		const mapped = mapWalletError(bridgeJsonRpcError(code, `bridge error ${code}`));
+		expect((mapped as SeekerConnectError).code).toBe(SeekerConnectErrorCode.requestDeclined);
+	});
+
+	it('maps unknown bridge jsonRpcErrorCode to wallet-error', () => {
+		const mapped = mapWalletError(
+			bridgeJsonRpcError(SolanaMobileWalletAdapterProtocolErrorCode.ERROR_TOO_MANY_PAYLOADS, 'bridge error -5'),
+		);
+		expect((mapped as SeekerConnectError).code).toBe(SeekerConnectErrorCode.walletError);
+	});
+
+	it('passes JSON_RPC_ERROR without jsonRpcErrorCode through for the seal', () => {
+		const cause = new Error('malformed bridge rejection');
+		(cause as Error & { code?: string }).code = 'JSON_RPC_ERROR';
+		expect(mapWalletError(cause)).toBe(cause);
+	});
+});
+
+describe('walletFailure', () => {
+	it('returns classified protocol errors unchanged', () => {
+		const classified = mapWalletError(adapterError('ERROR_SESSION_CLOSED'));
+		expect(walletFailure(classified)).toBe(classified);
+	});
+
+	it('seals raw platform exceptions into wallet-error with cause preserved', () => {
+		// Observed on-device: the RN bridge rejects with the bare JVM
+		// exception when the session is canceled mid-request.
+		const cause = new Error('java.util.concurrent.CancellationException');
+		const failure = walletFailure(cause);
+		expect(failure.code).toBe(SeekerConnectErrorCode.walletError);
+		expect(failure.message).toBe(cause.message);
+		expect(failure.cause).toBe(cause);
+	});
+
+	it('stringifies non-error causes', () => {
+		expect(walletFailure('native module returned junk').message).toBe('native module returned junk');
 	});
 });
 

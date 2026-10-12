@@ -18,21 +18,22 @@ import {
 	base64ToUint8Array,
 } from '@solana-mobile/mobile-wallet-adapter-protocol/encoding';
 
-import { mapWalletError } from './errors.js';
+import { walletFailure } from './errors.js';
 
 /**
  * Wraps one live `MobileWallet` handle as the port's `SeekerWallet`.
- * Every method guards: protocol errors are mapped onto the taxonomy,
- * while errors from the consumer's own code (impossible inside these
- * methods, but cheap to allow) pass through. Valid only inside the
- * `transact` callback that received it.
+ * Every method guards: all failures are sealed into the taxonomy —
+ * classified protocol errors map precisely, anything else becomes
+ * `walletError` (the React Native bridge can deliver raw platform
+ * exceptions). Valid only inside the `transact` callback that received
+ * it.
  */
 export function createSessionWallet(wallet: MobileWallet, config: SeekerConnectConfig): SeekerWallet {
 	const guard = async <T>(fn: () => Promise<T>): Promise<T> => {
 		try {
 			return await fn();
 		} catch (e) {
-			throw mapWalletError(e);
+			throw walletFailure(e);
 		}
 	};
 	return {

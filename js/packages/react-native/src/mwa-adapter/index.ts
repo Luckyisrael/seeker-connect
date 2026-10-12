@@ -1,8 +1,8 @@
 /**
  * React Native implementation of the `SeekerLink` port over the local
- * Mobile Wallet Adapter session (`startScenario` from
- * `@solana-mobile/mobile-wallet-adapter-protocol` — the same package the
- * web adapter uses for its Nostr transport; the session seam is the only
+ * Mobile Wallet Adapter session (`transact` from the React Native export
+ * of `@solana-mobile/mobile-wallet-adapter-protocol` — the same package
+ * the web adapter runs its scenario API on; the session seam is the only
  * difference between the two targets).
  *
  * Per-interaction sessions, like every upstream target: one `transact` =
@@ -21,7 +21,12 @@ import {
 	SeekerConnectError,
 	SeekerConnectErrorCode,
 } from '@solana-mobile/seeker-connect-core';
-import { startScenario, type Scenario } from '@solana-mobile/mobile-wallet-adapter-protocol';
+import {
+	transact,
+	type MobileWallet,
+	type Scenario,
+	type WalletAssociationConfig,
+} from '@solana-mobile/mobile-wallet-adapter-protocol';
 
 import { associationFailure } from './errors.js';
 import { createSessionWallet } from './wire.js';
@@ -40,15 +45,45 @@ const DEFAULT_ASSOCIATION_TIMEOUT_MS = 30_000;
 export type LocalSessionStarter = (args: { baseUri?: string }) => Promise<Scenario>;
 
 /**
- * The real local session. `startScenario` associates through the
- * Android App-Link mechanism (the shared `connect.solanamobile.com`
- * domain on first connect; the learned endpoint-specific URI thereafter).
- * Association retries and their timeout live inside the native module;
- * `transact` additionally bounds association with a loose outer race
- * that only fires on genuine hangs — see `associate` below.
+ * The real local session. The protocol package's React Native export
+ * provides the callback-scoped `transact` rather than the scenario API
+ * its shared types also declare (`startScenario` exists only on the
+ * web/default exports), so the native session is bridged into the
+ * `Scenario` shape: `transact` associates through the Android intent
+ * mechanism and holds its session open until `close()` releases the
+ * callback, which ends it natively. Association retries and their
+ * timeout live inside the native module; the adapter additionally
+ * bounds association with a loose outer race that only fires on genuine
+ * hangs — see `associate` below.
+ *
+ * `baseUri` selects the association target. A learned
+ * endpoint-specific URI (the wallet-issued `wallet_uri_base`) passes
+ * through so that wallet's App-Link resolves directly; the shared-web
+ * first-connect sentinel has no Android association meaning, so it and
+ * an absent URI both fall back to Android's own default — an unprefixed
+ * `solana-wallet:` intent, the wallet chooser when several qualify.
  */
-export const nativeSessionStarter: LocalSessionStarter = ({ baseUri }) =>
-	startScenario(baseUri === undefined ? undefined : { baseUri });
+export const nativeSessionStarter: LocalSessionStarter = async ({ baseUri }) => {
+	const config: WalletAssociationConfig | undefined =
+		baseUri === undefined || baseUri === DEFAULT_FIRST_CONNECT_WALLET_BASE_URI ? undefined : { baseUri };
+	let deliver!: (wallet: MobileWallet) => void;
+	let abandon!: (reason: unknown) => void;
+	const wallet = new Promise<MobileWallet>((resolve, reject) => {
+		deliver = resolve;
+		abandon = reject;
+	});
+	let release!: () => void;
+	const released = new Promise<void>((resolve) => {
+		release = resolve;
+	});
+	// `transact`'s rejection lands on the wallet promise the adapter
+	// awaits and observes, never as an unhandled rejection of its own.
+	void transact(async (sessionWallet) => {
+		deliver(sessionWallet);
+		await released;
+	}, config).then(undefined, abandon);
+	return { wallet, close: release };
+};
 
 /** Bounds association only; the interaction itself is never timed out. */
 async function associate(walletPromise: Scenario['wallet'], timeoutMs: number): Promise<Awaited<Scenario['wallet']>> {

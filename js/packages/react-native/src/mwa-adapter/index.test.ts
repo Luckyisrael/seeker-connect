@@ -1,8 +1,9 @@
 /**
  * Session-lifecycle laws the contract suite doesn't reach: abandoned
  * promises never surface as unhandled rejections, a wallet refusal never
- * triggers a retry inside the dead session, and abort tears the session
- * down exactly once.
+ * triggers a retry inside the dead session, abort tears the session
+ * down exactly once, and every session-layer rejection stays inside the
+ * closed taxonomy.
  */
 import {
 	SeekerConnectError,
@@ -84,6 +85,26 @@ describe('session lifecycle laws', () => {
 			);
 		expect(error).toBeInstanceOf(SeekerConnectError);
 		expect((error as SeekerConnectError).code).toBe(SeekerConnectErrorCode.sessionClosed);
+		expect(handle.authorize).toHaveBeenCalledTimes(1);
+	});
+
+	it('seals raw session-layer rejections into the taxonomy (bridge-observed shape)', async () => {
+		handle.authorize.mockClear();
+		// Observed on a real device: a session canceled mid-request
+		// rejects with the bare platform exception, matching none of the
+		// protocol error classes.
+		handle.authorize.mockRejectedValueOnce(new Error('java.util.concurrent.CancellationException'));
+		const link = createLocalSeekerLink(scenarioStarter());
+		const error = await link
+			.transact(CONFIG, (wallet) => wallet.authorize())
+			.then(
+				() => {
+					throw new Error('transact resolved unexpectedly');
+				},
+				(e: unknown) => e,
+			);
+		expect(error).toBeInstanceOf(SeekerConnectError);
+		expect((error as SeekerConnectError).code).toBe(SeekerConnectErrorCode.walletError);
 		expect(handle.authorize).toHaveBeenCalledTimes(1);
 	});
 
