@@ -8,8 +8,9 @@
  */
 export {
 	createLocalSeekerLink,
+	nativeSessionStarter,
 	type LocalSessionStarter,
-	type MwaWalletHandle,
+	type MwaScenario,
 } from './mwa-adapter/index.js';
 export {
 	createAsyncStorageAuthorizationCache,

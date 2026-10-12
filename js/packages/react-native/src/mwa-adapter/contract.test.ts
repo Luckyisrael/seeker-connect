@@ -2,11 +2,8 @@
  * Runs the upstream `SeekerLink` contract suite against the React Native
  * local adapter via the fake-wallet double — the exact wiring shape of
  * the web package's contract.test.ts, plugged into the RN adapter's
- * `LocalSessionStarter` injection point.
- *
- * This file is the LAW of the RN target: upstream runs it on their CI
- * when the PR lands, and it is the first thing to go red in Phase 1 and
- * the last thing that may go red ever.
+ * `LocalSessionStarter` injection point. Upstream runs this on their CI
+ * when the PR lands; it must never fail.
  */
 import { base58FromUint8Array } from '@solana-mobile/mobile-wallet-adapter-protocol/encoding';
 
@@ -46,9 +43,8 @@ testSeekerLinkContract('react-native local adapter', {
 					name: 'Contract Dapp',
 					uri: 'https://dapp.example.com',
 				},
-				// Upstream design question #1 (START-HERE §2): the shared
-				// config REQUIRES relayDomain even for local-only targets.
-				// Placeholder until upstream decides; never dialed.
+				// The shared config type requires relayDomain, but this
+				// adapter never touches a relay. Placeholder; never dialed.
 				relayDomain: 'unavailable-for-local.example',
 			},
 			expected: {

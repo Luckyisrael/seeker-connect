@@ -1,9 +1,9 @@
 /**
- * React Native implementation of the `SeekerLink` port over the RN local
- * Mobile Wallet Adapter session — the structural twin of the web Nostr
- * adapter (`js/packages/web/src/mwa-adapter/index.ts`, 247 lines), with
- * the session seam swapped and made INJECTABLE so the contract suite can
- * drive a wallet double without a device.
+ * React Native implementation of the `SeekerLink` port over the local
+ * Mobile Wallet Adapter session (`startScenario` from
+ * `@solana-mobile/mobile-wallet-adapter-protocol` — the same package the
+ * web adapter uses for its Nostr transport; the session seam is the only
+ * difference between the two targets).
  *
  * Per-interaction sessions, like every upstream target: one `transact` =
  * one association, one callback, always torn down. Continuity across
@@ -11,7 +11,6 @@
  * AuthorizationCache — never a held transport.
  */
 import type {
-	SeekerAuthorization,
 	SeekerConnectConfig,
 	SeekerLink,
 	SeekerTransactOptions,
@@ -19,55 +18,71 @@ import type {
 } from '@solana-mobile/seeker-connect-core';
 import {
 	DEFAULT_FIRST_CONNECT_WALLET_BASE_URI,
-	DEFAULT_SEEKER_CHAIN,
 	SeekerConnectError,
 	SeekerConnectErrorCode,
 } from '@solana-mobile/seeker-connect-core';
+import { startScenario, type Scenario } from '@solana-mobile/mobile-wallet-adapter-protocol';
 
-import { mapSessionError } from './errors.js';
-import { createSessionWallet, type MwaWalletHandle } from './wire.js';
+import { associationFailure } from './errors.js';
+import { createSessionWallet } from './wire.js';
 
-export type { MwaWalletHandle };
+export type { Scenario as MwaScenario };
 
 const DEFAULT_ASSOCIATION_TIMEOUT_MS = 30_000;
 
 /**
- * Establishes one MWA session against the device's wallet endpoint and
- * resolves the live (wire-shaped) wallet handle.
+ * Establishes one MWA scenario against the device's wallet endpoint.
  *
  * The injection point that makes this adapter contract-testable without
  * hardware: production defaults to the native session below; tests pass a
- * fake that records observations for the contract suite.
- *
- * TODO(Phase 2): implement `nativeSessionStarter` over the RN MWA local
- * session. The candidates, to verify against the installed d.ts rather
- * than guess:
- *   - `transact` / `startScenario` from `@solana-mobile/mobile-wallet-adapter-protocol`
- *     (the same ^3 package the web adapter imports its Nostr scenario from),
- *   - the protocol-kit wrapper the wallet-ui stack uses on RN.
- * The MWA wire shapes on the other side of this seam are identical to
- * web's — that is why `wire.ts` ports cleanly.
+ * fake scenario that records observations for the contract suite.
  */
-export type LocalSessionStarter = (args: {
-	config: SeekerConnectConfig;
-	walletUriBase?: string | undefined;
-	signal?: AbortSignal | undefined;
-}) => Promise<MwaWalletHandle>;
+export type LocalSessionStarter = (args: { baseUri?: string }) => Promise<Scenario>;
+
+/**
+ * The real local session. `startScenario` associates through the
+ * Android App-Link mechanism (the shared `connect.solanamobile.com`
+ * domain on first connect; the learned endpoint-specific URI thereafter).
+ * Association retries and their timeout live inside the native module;
+ * `transact` additionally bounds association with a loose outer race
+ * that only fires on genuine hangs — see `associate` below.
+ */
+export const nativeSessionStarter: LocalSessionStarter = ({ baseUri }) =>
+	startScenario(baseUri === undefined ? undefined : { baseUri });
+
+/** Bounds association only; the interaction itself is never timed out. */
+async function associate(walletPromise: Scenario['wallet'], timeoutMs: number): Promise<Awaited<Scenario['wallet']>> {
+	let timer: ReturnType<typeof setTimeout> | undefined;
+	try {
+		return await Promise.race([
+			walletPromise,
+			new Promise<never>((_, reject) => {
+				timer = setTimeout(
+					() =>
+						reject(
+							new SeekerConnectError(
+								SeekerConnectErrorCode.associationFailed,
+								`No wallet completed association within ${timeoutMs}ms`,
+							),
+						),
+					timeoutMs,
+				);
+			}),
+		]);
+	} catch (e) {
+		throw e instanceof SeekerConnectError ? e : associationFailure(e);
+	} finally {
+		clearTimeout(timer);
+	}
+}
 
 /**
  * Creates the React Native `SeekerLink`. Each `transact` opens one local
- * MWA session and closes it when the callback settles.
+ * MWA scenario and closes it when the callback settles.
  *
  * @param startSession - Session seam; defaults to the native RN session.
  */
-export function createLocalSeekerLink(
-	startSession: LocalSessionStarter = () => {
-		throw new SeekerConnectError(
-			SeekerConnectErrorCode.walletError,
-			'createLocalSeekerLink: no native session starter available yet — the RN MWA session seam is unimplemented (scaffold). Pass a LocalSessionStarter or complete TODO(Phase 2).',
-		);
-	},
-): SeekerLink {
+export function createLocalSeekerLink(startSession: LocalSessionStarter = nativeSessionStarter): SeekerLink {
 	return {
 		async transact<T>(
 			config: SeekerConnectConfig,
@@ -81,46 +96,33 @@ export function createLocalSeekerLink(
 					'The interaction was aborted before the session started',
 				);
 			}
-			// TODO(Phase 2): real association. The structure below is the
-			// web adapter's, kept deliberately: map every failure through
-			// the taxonomy, race the association phase against
-			// `associationTimeoutMs` (association only, never the
-			// interaction), and settle exactly once.
-			void DEFAULT_ASSOCIATION_TIMEOUT_MS;
-			void DEFAULT_SEEKER_CHAIN;
-			void DEFAULT_FIRST_CONNECT_WALLET_BASE_URI;
-			void mapSessionError;
-			let handle: MwaWalletHandle;
+			let scenario: Scenario;
 			try {
-				handle = await startSession({
-					config,
-					walletUriBase:
-						options?.walletUriBase ??
-						config.firstConnectWalletBaseUri ??
+				scenario = await startSession({
+					baseUri:
+						options?.walletUriBase ||
+						config.firstConnectWalletBaseUri ||
 						DEFAULT_FIRST_CONNECT_WALLET_BASE_URI,
-					signal,
 				});
 			} catch (e) {
-				throw mapSessionError(e, 'association');
+				throw associationFailure(e);
 			}
-			const onAbort = () => {
-				// TODO(Phase 2): tear the native session down (mirrors the
-				// web adapter's `scenario.close()` on abort).
-				void handle;
-			};
+			// The scenario closes below regardless of outcome; if the race is
+			// lost, the abandoned wallet promise still rejects on close and must
+			// not surface as an unhandled rejection.
+			void scenario.wallet.then(undefined, () => undefined);
+			const onAbort = () => scenario.close();
 			signal?.addEventListener('abort', onAbort, { once: true });
 			try {
-				return await callback(createSessionWallet(handle));
-			} catch (e) {
-				throw mapSessionError(e, 'interaction');
+				const wallet = await associate(
+					scenario.wallet,
+					config.associationTimeoutMs ?? DEFAULT_ASSOCIATION_TIMEOUT_MS,
+				);
+				return await callback(createSessionWallet(wallet, config));
 			} finally {
 				signal?.removeEventListener('abort', onAbort);
-				// TODO(Phase 2): close the native session. MWA sessions are
-				// per-interaction — nothing outlives this call.
+				scenario.close();
 			}
 		},
 	};
 }
-
-/** What the SIWS authorize path returns, decoded — re-exported shape doc. */
-export type { SeekerAuthorization };

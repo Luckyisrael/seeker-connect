@@ -3,8 +3,8 @@
  * around wallet interactions. Core's law: implementations "must tolerate
  * any call ordering and never throw."
  *
- * The web package ships lit components; the RN package ships a no-op
- * default plus (Phase 3) an optional React Native modal presenter.
+ * The web package ships lit components; this package ships a no-op
+ * default plus an optional React Native modal presenter.
  */
 import type { SeekerConnectPresenter } from '@solana-mobile/seeker-connect-core';
 
