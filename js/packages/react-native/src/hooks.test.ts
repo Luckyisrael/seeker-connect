@@ -113,3 +113,143 @@ describe('useSeekerConnect', () => {
 		expect(cache.clear).toHaveBeenCalled();
 	});
 });
+
+describe('presenter', () => {
+	function presenterHarness() {
+		const settle = vi.fn();
+		const presenter = {
+			interactionStarted: vi.fn((cancel: () => void) => {
+				void cancel;
+				return settle;
+			}),
+			interactionFailed: vi.fn(),
+		};
+		let transactError: SeekerConnectError | undefined;
+		let hang = false;
+		let seenSignal: AbortSignal | undefined;
+		const link = {
+			transact: vi.fn(
+				<T>(config: SeekerConnectConfig, callback: () => Promise<T>, options?: { signal?: AbortSignal }) => {
+					void config;
+					void callback;
+					seenSignal = options?.signal;
+					if (hang) {
+						return new Promise<T>((_resolve, reject) => {
+							options?.signal?.addEventListener('abort', () => reject(new Error('session closed')), {
+								once: true,
+							});
+						});
+					}
+					if (transactError) return Promise.reject(transactError) as Promise<T>;
+					return Promise.resolve('ok' as T);
+				},
+			),
+		};
+		const queryClient = new QueryClient({
+			defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+		});
+		const wrapper = ({ children }: { children: ReactNode }) =>
+			createElement(QueryClientProvider, { client: queryClient }, children);
+		const { result } = renderHook(
+			() =>
+				useSeekerConnect({
+					config: CONFIG,
+					cache: fakeCache({ get: vi.fn(async () => undefined) }),
+					link,
+					presenter,
+				}),
+			{ wrapper },
+		);
+		return {
+			result,
+			presenter,
+			settle,
+			script: {
+				failWith(error: SeekerConnectError) {
+					transactError = error;
+				},
+				hang() {
+					hang = true;
+				},
+				abortSignal: () => seenSignal,
+			},
+		};
+	}
+
+	it('wraps each interaction and settles on success', async () => {
+		const { result, presenter, settle } = presenterHarness();
+
+		await expect(result.current.transact(async () => 'unused')).resolves.toBe('ok');
+
+		expect(presenter.interactionStarted).toHaveBeenCalledTimes(1);
+		expect(presenter.interactionFailed).not.toHaveBeenCalled();
+		expect(settle).toHaveBeenCalledTimes(1);
+	});
+
+	it('reports taxonomy failures to the presenter', async () => {
+		const { result, presenter, settle, script } = presenterHarness();
+		const failure = new SeekerConnectError(SeekerConnectErrorCode.authorizationDeclined, 'declined');
+		script.failWith(failure);
+
+		await expect(result.current.transact(async () => 'unused')).rejects.toBe(failure);
+
+		expect(presenter.interactionFailed).toHaveBeenCalledWith(failure);
+		expect(settle).toHaveBeenCalledTimes(1);
+	});
+
+	it('lets non-taxonomy errors through without announcing them', async () => {
+		const settle = vi.fn();
+		const presenter = {
+			interactionStarted: vi.fn(() => settle),
+			interactionFailed: vi.fn(),
+		};
+		const own = new Error('callback bug');
+		const link = {
+			transact: vi.fn(async () => {
+				throw own;
+			}),
+		};
+		const queryClient = new QueryClient({
+			defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+		});
+		const wrapper = ({ children }: { children: ReactNode }) =>
+			createElement(QueryClientProvider, { client: queryClient }, children);
+		const { result } = renderHook(
+			() =>
+				useSeekerConnect({
+					config: CONFIG,
+					cache: fakeCache({ get: vi.fn(async () => undefined) }),
+					link,
+					presenter,
+				}),
+			{ wrapper },
+		);
+
+		await expect(result.current.transact(async () => 'unused')).rejects.toBe(own);
+
+		expect(presenter.interactionFailed).not.toHaveBeenCalled();
+		expect(settle).toHaveBeenCalledTimes(1);
+	});
+
+	it('closing the progress UI aborts the session and rejects as cancelled', async () => {
+		const { result, presenter, settle, script } = presenterHarness();
+		script.hang();
+
+		const connecting = result.current.transact(async () => 'unused');
+		await vi.waitFor(() => expect(presenter.interactionStarted).toHaveBeenCalled());
+		const cancel = presenter.interactionStarted.mock.calls[0]![0];
+		cancel();
+
+		const error = await connecting.then(
+			() => {
+				throw new Error('transact resolved unexpectedly');
+			},
+			(e: unknown) => e,
+		);
+		expect(error).toBeInstanceOf(SeekerConnectError);
+		expect((error as SeekerConnectError).code).toBe(SeekerConnectErrorCode.cancelled);
+		expect(presenter.interactionFailed).not.toHaveBeenCalled();
+		expect(script.abortSignal()?.aborted).toBe(true);
+		expect(settle).toHaveBeenCalledTimes(1);
+	});
+});

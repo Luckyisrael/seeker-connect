@@ -27,8 +27,15 @@ The web SDK ships as four npm packages under `@solana-mobile/seeker-connect-*`:
 | [`@solana-mobile/seeker-connect-ui`](https://github.com/solana-mobile/seeker-connect/tree/main/js/packages/ui) | Seeker-Connect-owned UI (Lit): connect button, progress overlay, error dialogs. |
 | [`@solana-mobile/seeker-connect-core`](https://github.com/solana-mobile/seeker-connect/tree/main/js/packages/core) | Platform-agnostic contracts, shared types, and error taxonomy. |
 
+The React Native target ships as one package:
+
+| Package | Purpose |
+| --- | --- |
+| [`@solana-mobile/seeker-connect-react-native`](https://github.com/solana-mobile/seeker-connect/tree/main/js/packages/react-native) | React Native (Android) SDK — connects directly to the device's own wallet over the local MWA session. |
+
 Most dapps depend only on `@solana-mobile/seeker-connect-wallet-standard`, which
-pulls in `-web`, `-ui`, and `-core` transitively.
+pulls in `-web`, `-ui`, and `-core` transitively. React Native dapps depend on
+`@solana-mobile/seeker-connect-react-native` alone.
 
 The generated [API reference](https://solana-mobile.github.io/seeker-connect/api/)
 covers all four packages and is rebuilt from `main` on every push.
@@ -83,7 +90,7 @@ imperative `-web` path, configuration, and the error taxonomy — see the
 Three dapp-side targets, built in this order:
 
 1. **Web** (`js/`) — custom Wallet Standard implementation over the low-level MWA protocol package. (Shipping.)
-2. **React Native** (`js/`) — over the MWA native module. (Planned.)
+2. **React Native** (`js/`) — over the MWA native module. (Shipping.)
 3. **Android Kotlin** (`android/`) — gated on an upstream MWA patch. (Planned.)
 
 ## Repository layout
@@ -92,13 +99,15 @@ Three dapp-side targets, built in this order:
 seeker-connect/
 ├── js/          JS/TS monorepo (web + React Native) — pnpm workspaces + Turborepo + vitest
 │   ├── packages/
-│   │   ├── core/             SeekerLink port, shared types, error taxonomy, contract-test suite
-│   │   ├── wallet-standard/  Wallet Standard implementation — the first MVP
-│   │   ├── ui/               Seeker-Connect-owned UI (Lit): progress overlay + error dialogs
-│   │   └── web/              imperative web SDK for dapps not using Wallet Standard
+│   │   ├── core/                SeekerLink port, shared types, error taxonomy, contract-test suite
+│   │   ├── wallet-standard/     Wallet Standard implementation — the first MVP
+│   │   ├── ui/                  Seeker-Connect-owned UI (Lit): progress overlay + error dialogs
+│   │   ├── web/                 imperative web SDK for dapps not using Wallet Standard
+│   │   └── react-native/        React Native (Android) SDK over the local MWA session
 │   └── examples/
-│       └── example-web/      Vite + React demo consuming Wallet Standard directly,
-│                             plus the browser E2E harness (`pnpm e2e`)
+│       ├── example-web/         Vite + React demo consuming Wallet Standard directly,
+│       │                        plus the browser E2E harness (`pnpm e2e`)
+│       └── example-react-native/ React Native device harness (mock wallet or Seeker)
 └── android/     Android Kotlin SDK (Gradle) — added in the Android phase
 ```
 

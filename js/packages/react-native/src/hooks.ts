@@ -18,11 +18,13 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type {
 	AuthorizationCache,
 	SeekerConnectConfig,
+	SeekerConnectPresenter,
 	SeekerLink,
 	SeekerTransactOptions,
 	SeekerWallet,
 	StoredAuthorization,
 } from '@solana-mobile/seeker-connect-core';
+import { SeekerConnectError, SeekerConnectErrorCode } from '@solana-mobile/seeker-connect-core';
 
 import { createLocalSeekerLink } from './mwa-adapter/index.js';
 
@@ -34,6 +36,13 @@ export interface UseSeekerConnectOptions {
 	cache: AuthorizationCache;
 	/** Supply to override the default local link (e.g. in tests). */
 	link?: SeekerLink;
+	/**
+	 * SDK-owned progress UI around each `transact` (spinner overlay, error
+	 * dialog). Mirrors the web SDK's presenter wiring: its `cancel` aborts
+	 * the session and rejects as `cancelled` without an error dialog;
+	 * other taxonomy failures reach `interactionFailed`.
+	 */
+	presenter?: SeekerConnectPresenter;
 }
 
 export interface UseSeekerConnectResult {
@@ -50,11 +59,57 @@ export interface UseSeekerConnectResult {
 }
 
 /**
+ * Runs one `transact` behind the presenter when one is supplied. The
+ * wiring mirrors the web SDK's wallet-standard layer exactly: the
+ * presenter's `cancel` aborts the session, a user-initiated abort
+ * rejects as `cancelled` (no error dialog), and other taxonomy
+ * failures reach `interactionFailed`. Without a presenter the link is
+ * called untouched.
+ */
+async function transactPresented<T>(
+	link: SeekerLink,
+	config: SeekerConnectConfig,
+	callback: (wallet: SeekerWallet) => Promise<T>,
+	options: SeekerTransactOptions | undefined,
+	presenter: SeekerConnectPresenter | undefined,
+): Promise<T> {
+	if (!presenter) {
+		return link.transact(config, callback, options);
+	}
+	const abort = new AbortController();
+	const forwardAbort = () => abort.abort();
+	if (options?.signal) {
+		if (options.signal.aborted) {
+			abort.abort();
+		} else {
+			options.signal.addEventListener('abort', forwardAbort, { once: true });
+		}
+	}
+	const settle = presenter.interactionStarted(() => abort.abort());
+	try {
+		return await link.transact(config, callback, { ...options, signal: abort.signal });
+	} catch (error) {
+		if (abort.signal.aborted) {
+			throw new SeekerConnectError(SeekerConnectErrorCode.cancelled, 'The wallet interaction was cancelled', {
+				cause: error,
+			});
+		}
+		if (error instanceof SeekerConnectError) {
+			presenter.interactionFailed(error);
+		}
+		throw error;
+	} finally {
+		options?.signal?.removeEventListener('abort', forwardAbort);
+		settle();
+	}
+}
+
+/**
  * Binds a `SeekerLink` and `AuthorizationCache` to the component tree.
  * The cached authorization reads as a query; wallet interactions run as
  * a mutation whose completion re-checks the cache.
  */
-export function useSeekerConnect({ config, cache, link }: UseSeekerConnectOptions): UseSeekerConnectResult {
+export function useSeekerConnect({ config, cache, link, presenter }: UseSeekerConnectOptions): UseSeekerConnectResult {
 	const queryClient = useQueryClient();
 	const seekerLink = useMemo(() => link ?? createLocalSeekerLink(), [link]);
 
@@ -75,7 +130,7 @@ export function useSeekerConnect({ config, cache, link }: UseSeekerConnectOption
 		}: {
 			callback: (wallet: SeekerWallet) => Promise<unknown>;
 			options?: SeekerTransactOptions;
-		}) => seekerLink.transact(config, callback, options),
+		}) => transactPresented(seekerLink, config, callback, options, presenter),
 		retry: false,
 		onSuccess: () => queryClient.invalidateQueries({ queryKey: SEEKER_AUTHORIZATION_QUERY_KEY }),
 	});

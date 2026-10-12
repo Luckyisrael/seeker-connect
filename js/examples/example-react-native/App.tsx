@@ -1,7 +1,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { useCallback, useState } from 'react';
-import { Button, ScrollView, StatusBar, StyleSheet, Text, View } from 'react-native';
+import { useCallback, useMemo, useState } from 'react';
+import { ActivityIndicator, Alert, Button, ScrollView, Share, StatusBar, StyleSheet, Text, View } from 'react-native';
 
 import {
 	createAsyncStorageAuthorizationCache,
@@ -9,8 +9,12 @@ import {
 	isSeekerDevice,
 	SeekerConnectError,
 	type SeekerConnectConfig,
+	type SeekerConnectPresenter,
 } from '@solana-mobile/seeker-connect-react-native';
 import { useSeekerConnect } from '@solana-mobile/seeker-connect-react-native/hooks';
+
+import { base58Decode, base58Encode } from './base58';
+import { buildMemoTransaction, fetchRecentBlockhash } from './memoTransaction';
 
 const queryClient = new QueryClient();
 
@@ -31,12 +35,36 @@ function asciiBytes(text: string): Uint8Array {
 	return Uint8Array.from(text, (character) => character.charCodeAt(0));
 }
 
+function asciiText(bytes: Uint8Array): string {
+	return Array.from(bytes, (byte) => String.fromCharCode(byte)).join('');
+}
+
 function hex(bytes: Uint8Array): string {
 	return Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('');
 }
 
 function Connector() {
-	const { authorization, isConnecting, connectError, transact, disconnect } = useSeekerConnect({ config, cache });
+	const [waiting, setWaiting] = useState<(() => void) | null>(null);
+	// SDK-owned progress UI: a spinner overlay with a Cancel button while a
+	// wallet interaction is in flight, plus an alert for taxonomy failures.
+	// `interactionFailed` never fires for user-initiated cancels.
+	const presenter = useMemo<SeekerConnectPresenter>(
+		() => ({
+			interactionStarted: (cancel) => {
+				setWaiting(() => cancel);
+				return () => setWaiting(null);
+			},
+			interactionFailed: (error) => {
+				Alert.alert('Wallet interaction failed', `${error.code}: ${error.message}`);
+			},
+		}),
+		[],
+	);
+	const { authorization, isConnecting, connectError, transact, disconnect } = useSeekerConnect({
+		config,
+		cache,
+		presenter,
+	});
 	const [log, setLog] = useState<string[]>([]);
 
 	const append = useCallback((line: string) => {
@@ -101,6 +129,75 @@ function Connector() {
 		})();
 	};
 
+	const signTransaction = () => {
+		const stored = authorization;
+		const address = stored?.accounts[0]?.address;
+		if (!stored || !address) {
+			append('not connected — connect first');
+			return;
+		}
+		void (async () => {
+			try {
+				await transact(
+					async (wallet) => {
+						await wallet.authorize({ authToken: stored.authToken });
+						const { blockhash, placeholder } = await fetchRecentBlockhash();
+						const payload = buildMemoTransaction(
+							base58Decode(address),
+							blockhash,
+							`Seeker Connect example @ ${new Date().toISOString()}`,
+						);
+						const [signed] = await wallet.signTransactions({ payloads: [payload] });
+						// shortvec count byte (1) + 64-byte ed25519 signature.
+						const signature = signed.slice(1, 65);
+						const signatureSet = signature.some((byte) => byte !== 0);
+						append(
+							`sign_transactions ok — ${signed.length}B, signature ${signatureSet ? hex(signature.slice(0, 8)) : 'ALL-ZERO'}…${
+								placeholder ? ' (placeholder blockhash)' : ''
+							}`,
+						);
+					},
+					stored.walletUriBase ? { walletUriBase: stored.walletUriBase } : undefined,
+				);
+			} catch (error) {
+				append(`sign transaction failed — ${errorText(error)}`);
+			}
+		})();
+	};
+
+	const signIn = () => {
+		const stored = authorization;
+		void (async () => {
+			try {
+				await transact(
+					async (wallet) => {
+						const granted = await wallet.authorize({
+							...(stored ? { authToken: stored.authToken } : {}),
+							signInPayload: {
+								domain: 'seeker-connect.example.com',
+								statement: 'Sign in to the Seeker Connect React Native example',
+								uri: 'https://seeker-connect.example.com',
+								nonce: Math.random().toString(36).slice(2, 10),
+								issuedAt: new Date().toISOString(),
+							},
+						});
+						const proof = granted.signInResult;
+						if (!proof) {
+							append('siws — no signInResult returned');
+							return;
+						}
+						append(
+							`siws ok — ${proof.address} sig ${base58Encode(proof.signature)} message "${asciiText(proof.signedMessage).slice(0, 48)}…"`,
+						);
+					},
+					stored?.walletUriBase ? { walletUriBase: stored.walletUriBase } : undefined,
+				);
+			} catch (error) {
+				append(`sign in failed — ${errorText(error)}`);
+			}
+		})();
+	};
+
 	const forget = () => {
 		const stored = authorization;
 		void (async () => {
@@ -120,6 +217,10 @@ function Connector() {
 			await disconnect();
 			append('local authorization cleared');
 		})();
+	};
+
+	const shareLog = () => {
+		void Share.share({ message: log.join('\n') || '(log is empty)' });
 	};
 
 	return (
@@ -147,7 +248,10 @@ function Connector() {
 					onPress={connect}
 				/>
 				<Button title="Sign message" disabled={isConnecting || !authorization} onPress={signMessage} />
+				<Button title="Sign transaction" disabled={isConnecting || !authorization} onPress={signTransaction} />
+				<Button title="Sign in (SIWS)" disabled={isConnecting} onPress={signIn} />
 				<Button title="Disconnect" disabled={isConnecting || !authorization} onPress={forget} />
+				<Button title="Share log" disabled={log.length === 0} onPress={shareLog} />
 			</View>
 			<ScrollView style={styles.log}>
 				{log.map((entry, index) => (
@@ -156,6 +260,15 @@ function Connector() {
 					</Text>
 				))}
 			</ScrollView>
+			{waiting != null && (
+				<View style={styles.overlay}>
+					<View style={styles.overlayCard}>
+						<ActivityIndicator color="#8fd48f" size="large" />
+						<Text style={styles.overlayText}>Waiting for the wallet…</Text>
+						<Button title="Cancel" onPress={() => waiting()} />
+					</View>
+				</View>
+			)}
 		</View>
 	);
 }
@@ -216,5 +329,26 @@ const styles = StyleSheet.create({
 		fontSize: 12,
 		fontFamily: 'monospace',
 		marginBottom: 4,
+	},
+	overlay: {
+		position: 'absolute',
+		top: 0,
+		left: 0,
+		right: 0,
+		bottom: 0,
+		backgroundColor: 'rgba(11, 14, 20, 0.85)',
+		justifyContent: 'center',
+		alignItems: 'center',
+	},
+	overlayCard: {
+		backgroundColor: '#151a24',
+		borderRadius: 12,
+		padding: 24,
+		gap: 16,
+		alignItems: 'center',
+	},
+	overlayText: {
+		color: '#c7d0dd',
+		fontSize: 14,
 	},
 });
