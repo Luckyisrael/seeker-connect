@@ -4,10 +4,7 @@
  * through untouched (the consumer's callback errors must reach the
  * caller unmodified).
  */
-import {
-	SeekerConnectError,
-	SeekerConnectErrorCode,
-} from '@solana-mobile/seeker-connect-core';
+import { SeekerConnectError, SeekerConnectErrorCode } from '@solana-mobile/seeker-connect-core';
 import {
 	SolanaMobileWalletAdapterError,
 	SolanaMobileWalletAdapterProtocolError,

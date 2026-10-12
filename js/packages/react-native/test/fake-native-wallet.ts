@@ -34,9 +34,7 @@ export function fakeSignedPayload(payload: Uint8Array): Uint8Array {
 
 /** Deterministic signature bytes the double reports per submitted tx. */
 export function fakeSignature(payload: Uint8Array): Uint8Array {
-	return payload.slice(0, 64).length === 64
-		? payload.slice(0, 64)
-		: new Uint8Array(64).fill(0x53);
+	return payload.slice(0, 64).length === 64 ? payload.slice(0, 64) : new Uint8Array(64).fill(0x53);
 }
 
 export interface FakeNativeWalletOptions {

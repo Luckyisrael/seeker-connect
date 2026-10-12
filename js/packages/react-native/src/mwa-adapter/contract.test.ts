@@ -20,8 +20,38 @@ import {
 } from '../../test/fake-native-wallet.js';
 
 const PUBLIC_KEY = Uint8Array.of(
-	1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21,
-	22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32,
+	1,
+	2,
+	3,
+	4,
+	5,
+	6,
+	7,
+	8,
+	9,
+	10,
+	11,
+	12,
+	13,
+	14,
+	15,
+	16,
+	17,
+	18,
+	19,
+	20,
+	21,
+	22,
+	23,
+	24,
+	25,
+	26,
+	27,
+	28,
+	29,
+	30,
+	31,
+	32,
 );
 
 const WALLET = {
@@ -88,7 +118,5 @@ testSeekerLinkContract('react-native local adapter', {
 // catches a drifting PUBLIC_KEY/base58 helper before the suite blames the
 // adapter for the double's bug.
 it('the double decodes its own account to the expected base58 address', () => {
-	expect(base58FromUint8Array(PUBLIC_KEY)).toBe(
-		fakeDecodedAccount(WALLET).address,
-	);
+	expect(base58FromUint8Array(PUBLIC_KEY)).toBe(fakeDecodedAccount(WALLET).address);
 });

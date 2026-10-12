@@ -7,11 +7,12 @@
  * plug in whichever they chose. (The upstream caching recipe warns the
  * default AsyncStorage cache is unencrypted — production apps inject
  * secure storage, which this shape exists for.)
+ *
+ * `StoredAuthorization.accounts[].publicKey` is bytes, which JSON does
+ * not preserve: the envelope encodes each as base64 and the reader
+ * revives them, so a round-tripped authorization is byte-identical.
  */
-import type {
-	AuthorizationCache,
-	StoredAuthorization,
-} from '@solana-mobile/seeker-connect-core';
+import type { SeekerAccount, StoredAuthorization, AuthorizationCache } from '@solana-mobile/seeker-connect-core';
 
 /** AsyncStorage/expo-secure-store-compatible async key-value surface. */
 export interface KeyValueStorage {
@@ -25,9 +26,51 @@ const DEFAULT_KEY = 'seeker-connect.authorization';
 /** Envelope version — bump on shape changes; readers migrate forward. */
 const VERSION = 1;
 
+interface StoredAccount {
+	address: string;
+	publicKey: string;
+	label?: string;
+}
+
 interface Envelope {
 	v: number;
-	authorization: StoredAuthorization;
+	authorization: Omit<StoredAuthorization, 'accounts'> & { accounts: StoredAccount[] };
+}
+
+function encodeAuthorization(authorization: StoredAuthorization): Envelope {
+	return {
+		v: VERSION,
+		authorization: {
+			...authorization,
+			accounts: authorization.accounts.map((account) => ({
+				...account,
+				publicKey: bytesToBase64(account.publicKey),
+			})),
+		},
+	};
+}
+
+function decodeAuthorization(envelope: Envelope): StoredAuthorization {
+	return {
+		...envelope.authorization,
+		accounts: envelope.authorization.accounts.map((account): SeekerAccount => ({
+			...account,
+			publicKey: base64ToBytes(account.publicKey),
+		})),
+	};
+}
+
+function bytesToBase64(bytes: Uint8Array): string {
+	let binary = '';
+	for (const byte of bytes) binary += String.fromCharCode(byte);
+	return btoa(binary);
+}
+
+function base64ToBytes(encoded: string): Uint8Array {
+	const binary = atob(encoded);
+	const bytes = new Uint8Array(binary.length);
+	for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
+	return bytes;
 }
 
 export function createAsyncStorageAuthorizationCache(
@@ -51,7 +94,7 @@ export function createAsyncStorageAuthorizationCache(
 				if (parsed?.v !== VERSION || !parsed.authorization?.authToken) {
 					return undefined;
 				}
-				return parsed.authorization;
+				return decodeAuthorization(parsed);
 			} catch {
 				// Corrupt payload: clear it so it cannot fail forever.
 				void storage.removeItem(key).catch(() => undefined);
@@ -59,8 +102,7 @@ export function createAsyncStorageAuthorizationCache(
 			}
 		},
 		async set(authorization: StoredAuthorization): Promise<void> {
-			const envelope: Envelope = { v: VERSION, authorization };
-			await storage.setItem(key, JSON.stringify(envelope));
+			await storage.setItem(key, JSON.stringify(encodeAuthorization(authorization)));
 		},
 		async clear(): Promise<void> {
 			await storage.removeItem(key);

@@ -30,6 +30,10 @@
 		".": {
 			"types": "./dist/index.d.ts",
 			"import": "./dist/index.js"
+		},
+		"./hooks": {
+			"types": "./dist/hooks.d.ts",
+			"import": "./dist/hooks.js"
 		}
 	},
 	"scripts": {
@@ -40,11 +44,23 @@
 		"@solana-mobile/seeker-connect-core": "workspace:*"
 	},
 	"peerDependencies": {
+		"@tanstack/react-query": "^5.0.0",
 		"react": "*",
 		"react-native": "*"
 	},
+	"peerDependenciesMeta": {
+		"@tanstack/react-query": {
+			"optional": true
+		}
+	},
 	"devDependencies": {
+		"@tanstack/react-query": "^5.0.0",
+		"@testing-library/react": "^16.3.0",
+		"@types/react": "^19.2.18",
+		"@types/react-dom": "^19.2.4",
+		"happy-dom": "^20.0.11",
 		"react": "^19.2.0",
+		"react-dom": "^19.2.0",
 		"react-native": "^0.86.0",
 		"vitest": "^4.1.10"
 	}

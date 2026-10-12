@@ -7,10 +7,7 @@
  * error classes and codes; anything else (notably errors thrown by the
  * consumer's callback) passes through untouched.
  */
-import {
-	SeekerConnectError,
-	SeekerConnectErrorCode,
-} from '@solana-mobile/seeker-connect-core';
+import { SeekerConnectError, SeekerConnectErrorCode } from '@solana-mobile/seeker-connect-core';
 import {
 	SolanaMobileWalletAdapterError,
 	SolanaMobileWalletAdapterProtocolError,

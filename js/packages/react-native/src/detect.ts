@@ -12,7 +12,6 @@
 import { Platform } from 'react-native';
 
 export function isSeekerDevice(): boolean {
-	const model = (Platform.constants as { Model?: string } | undefined)
-		?.Model;
+	const model = (Platform.constants as { Model?: string } | undefined)?.Model;
 	return model === 'Seeker';
 }

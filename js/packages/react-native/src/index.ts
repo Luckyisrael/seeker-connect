@@ -12,10 +12,7 @@ export {
 	type LocalSessionStarter,
 	type MwaScenario,
 } from './mwa-adapter/index.js';
-export {
-	createAsyncStorageAuthorizationCache,
-	type KeyValueStorage,
-} from './authorization-cache.js';
+export { createAsyncStorageAuthorizationCache, type KeyValueStorage } from './authorization-cache.js';
 export { isSeekerDevice } from './detect.js';
 export { noopSeekerConnectPresenter } from './presenter.js';
 
