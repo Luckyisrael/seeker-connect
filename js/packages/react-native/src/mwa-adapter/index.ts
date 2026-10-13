@@ -51,10 +51,11 @@ export type LocalSessionStarter = (args: { baseUri?: string }) => Promise<Scenar
  * web/default exports), so the native session is bridged into the
  * `Scenario` shape: `transact` associates through the Android intent
  * mechanism and holds its session open until `close()` releases the
- * callback, which ends it natively. Association retries and their
- * timeout live inside the native module; the adapter additionally
- * bounds association with a loose outer race that only fires on genuine
- * hangs — see `associate` below.
+ * callback, which ends it natively. Association retries live inside the
+ * native module with their own window; the adapter still owns an
+ * independent `associationTimeoutMs` race (`associate` below), so the
+ * contract's bound is guaranteed by the platform package rather than
+ * delegated to whatever the native module happens to do.
  *
  * `baseUri` selects the association target. A learned
  * endpoint-specific URI (the wallet-issued `wallet_uri_base`) passes
