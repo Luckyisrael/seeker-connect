@@ -68,6 +68,7 @@ function Connector() {
 	const [log, setLog] = useState<string[]>([]);
 
 	const append = useCallback((line: string) => {
+		console.log(line);
 		setLog((current) => [`${new Date().toLocaleTimeString()}  ${line}`, ...current].slice(0, 50));
 	}, []);
 
